@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#4338ca">
+  <title>设置 · R2 Proxy</title>
+  <link rel="stylesheet" href="{{ .basePath }}/static/app.css?v=e3b43c1e">
+  <script>
+    // 主题初始化：在样式渲染前应用，避免深色模式闪白
+    (function () {
+      try {
+        var t = localStorage.getItem('r2proxy-theme') || 'auto';
+        if (t !== 'auto') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+
+</head>
+<body class="app">
+  {{ template "topbar" . }}
+
+  <main class="page page-narrow settings-page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">设置</h1>
+        <p class="page-desc">账号安全、API Key 与访问控制</p>
+      </div>
+    </div>
+
+    <div class="alert alert-danger" id="default-password-alert" hidden style="margin-bottom:16px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <div>
+        <b>你仍在使用默认密码</b>
+        <div>请立即在下方修改密码，避免账号被他人登录。</div>
+      </div>
+    </div>
+
+    <!-- 第一行：账号信息（跨两列） -->
+    <section class="card span-2">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          账号信息
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="stat-label">用户名</div>
+            <div class="stat-value" style="font-size:15px">{{ .user.Username }}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">角色</div>
+            <div class="stat-value" style="font-size:15px">{{ if .user.IsAdmin }}管理员{{ else }}普通用户{{ end }}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">登录方式</div>
+            <div class="stat-value" style="font-size:15px">{{ if eq .user.UserType "api" }}仅 API Key{{ else if eq .user.UserType "web" }}仅密码{{ else }}密码 + API Key{{ end }}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">API Key 白名单</div>
+            <div class="stat-value" style="font-size:15px" id="stat-ip-count">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Key -->
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8"/><path d="m17 6 2 2"/><path d="m14 9 2 2"/></svg>
+            API Key
+          </div>
+          <div class="card-sub">用于程序调用，请妥善保管</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="link-box" style="margin-bottom:12px">
+          <code id="api-key">{{ .user.APIKey }}</code>
+          <button class="icon-btn" type="button" id="copy-key" title="复制 API Key">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <div class="btn-group">
+          <button class="btn" type="button" id="regenerate-key">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+            重新生成
+          </button>
+          <a class="btn btn-ghost" href="{{ .basePath }}/shares">管理设备分享 →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- IP 白名单 -->
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+            API Key IP 白名单
+          </div>
+          <div class="card-sub">留空表示允许所有 IP；支持单个 IP 与 CIDR</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="chip-list" id="ip-list" style="margin-bottom:12px"></div>
+        <form class="input-with-btn" id="ip-form">
+          <input class="input" id="ip-input" type="text" placeholder="例如 203.0.113.7 或 10.0.0.0/8" autocomplete="off" spellcheck="false">
+          <button class="btn btn-primary" type="submit">添加</button>
+        </form>
+        <p class="hint" style="margin-top:8px">添加后立即生效。</p>
+      </div>
+    </section>
+
+    <!-- 修改密码 -->
+    <section class="card span-2">
+      <div class="card-head">
+        <div>
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            修改密码
+          </div>
+          <div class="card-sub">至少 15 位，需包含大小写字母、数字与特殊字符</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <form id="password-form" class="form-grid form-grid-3">
+          <div class="field">
+            <label class="label" for="old-password">当前密码</label>
+            <input class="input" id="old-password" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field">
+            <label class="label" for="new-password">新密码</label>
+            <input class="input" id="new-password" type="password" autocomplete="new-password" minlength="15" required>
+            <div class="password-meter" id="pw-meter"><span></span><span></span><span></span><span></span></div>
+            <div class="hint" id="pw-hint">强度：—</div>
+          </div>
+          <div class="field">
+            <label class="label" for="confirm-password">确认新密码</label>
+            <input class="input" id="confirm-password" type="password" autocomplete="new-password" minlength="15" required>
+            <div class="hint" id="pw-match"></div>
+          </div>
+          <div class="full btn-group">
+            <button class="btn btn-primary" type="submit" id="password-submit">保存新密码</button>
+            <button class="btn" type="button" id="generate-password">随机生成</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 退出登录（低频操作，收进设置页） -->
+    <section class="card span-2 logout-card">
+      <div class="card-body" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="min-width:0;flex:1 1 240px">
+          <div class="card-title" style="margin-bottom:2px">退出登录</div>
+          <div class="hint">退出后需要重新输入密码；API Key 不受影响。</div>
+        </div>
+        <button class="btn btn-danger" type="button" onclick="logoutConfirm()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+          退出当前账号
+        </button>
+      </div>
+    </section>
+
+    <!-- API 示例（整行） -->
+    <section class="card span-2">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-6 6 6 6"/><path d="m16 6 6 6-6 6"/></svg>
+          API 调用示例
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-ghost" type="button" id="copy-sample">复制示例</button>
+      </div>
+      <div class="card-body">
+        <div class="tabs" style="margin-bottom:10px">
+          <button class="tab active" type="button" data-code-tab="upload">获取上传签名</button>
+          <button class="tab" type="button" data-code-tab="put">Sign PUT 链接</button>
+          <button class="tab" type="button" data-code-tab="list">文件列表</button>
+          <button class="tab" type="button" data-code-tab="download">下载链接</button>
+        </div>
+        <pre class="pre" id="code-sample"></pre>
+        <p class="hint" style="margin-top:8px">把 <span class="kbd">&lt;API_KEY&gt;</span> 换成你的 Key，Base URL 为 <span class="kbd" id="base-url-hint"></span></p>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal" id="password-result-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title">随机密码</div><div class="modal-sub">已填入表单，请复制保存</div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="link-box">
+          <code id="generated-pw"></code>
+          <button class="icon-btn" type="button" id="copy-generated">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-block" type="button" data-close>我已保存</button>
+      </div>
+    </div>
+  </div>
+
+  {{ template "scripts" . }}
+  <script>
+    const BASE_PATH = '{{ .basePath }}';
+    const PUBLIC_BASE = '{{ .publicBaseURL }}';
+
+    /* ---------- API Key ---------- */
+    document.getElementById('copy-key').addEventListener('click', () => {
+      R2.copy(document.getElementById('api-key').textContent.trim());
+    });
+
+    document.getElementById('regenerate-key').addEventListener('click', async () => {
+      const ok = await R2.confirm({
+        title: '重新生成 API Key',
+        message: '旧的 API Key 会立即失效，使用旧 Key 的脚本需要同步更新。确定继续？',
+        confirmText: '重新生成',
+      });
+      if (!ok) return;
+      try {
+        const result = await R2.request(BASE_PATH + '/api/key/regenerate', { method: 'POST' });
+        document.getElementById('api-key').textContent = result.data.api_key;
+        R2.toast('新的 API Key 已生成', 'success');
+      } catch (err) { R2.toast(err.message, 'error'); }
+    });
+
+    /* ---------- IP 白名单 ---------- */
+    let whitelist = [];
+
+    function renderWhitelist() {
+      const box = document.getElementById('ip-list');
+      box.innerHTML = '';
+      if (!whitelist.length) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.style.fontFamily = 'var(--font)';
+        chip.textContent = '未限制，允许所有 IP';
+        box.appendChild(chip);
+        return;
+      }
+      whitelist.forEach((ip) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = ip;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '×';
+        remove.title = '移除';
+        remove.addEventListener('click', () => {
+          whitelist = whitelist.filter((v) => v !== ip);
+          saveWhitelist();
+        });
+        chip.appendChild(remove);
+        box.appendChild(chip);
+      });
+    }
+
+    function validIP(value) {
+      const v4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(\/(3[0-2]|[12]?\d))?$/;
+      const v6 = /^[0-9a-fA-F:]+(\/\d{1,3})?$/;
+      return v4.test(value) || (value.includes(':') && v6.test(value));
+    }
+
+    async function saveWhitelist() {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/key/ip-whitelist', {
+          method: 'PUT',
+          body: { ip_whitelist: whitelist },
+        });
+        whitelist = result.data.ip_whitelist || [];
+        renderWhitelist();
+        updateIPStat();
+        R2.toast('IP 白名单已更新', 'success');
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      }
+    }
+
+    function updateIPStat() {
+      const el = document.getElementById('stat-ip-count');
+      if (el) el.textContent = whitelist.length ? whitelist.length + ' 条' : '未限制';
+    }
+
+    document.getElementById('ip-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('ip-input');
+      const value = input.value.trim();
+      if (!value) return;
+      if (!validIP(value)) { R2.toast('IP 或网段格式不正确', 'error'); return; }
+      if (whitelist.includes(value)) { R2.toast('该地址已在白名单中', 'info'); return; }
+      if (whitelist.length >= 50) { R2.toast('最多 50 个白名单条目', 'error'); return; }
+      whitelist.push(value);
+      input.value = '';
+      saveWhitelist();
+    });
+
+    (async function loadWhitelist() {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/key/ip-whitelist');
+        whitelist = result.data.ip_whitelist || [];
+        renderWhitelist();
+        updateIPStat();
+      } catch (err) { /* 静默 */ }
+    })();
+
+    /* ---------- 密码 ---------- */
+    const newPw = document.getElementById('new-password');
+    const confirmPw = document.getElementById('confirm-password');
+
+    function scorePassword(pw) {
+      let score = 0;
+      if (pw.length >= 15) score++;
+      if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+      if (/\d/.test(pw)) score++;
+      if (/[^A-Za-z0-9]/.test(pw)) score++;
+      return Math.min(score, 4);
+    }
+
+    newPw.addEventListener('input', () => {
+      const score = scorePassword(newPw.value);
+      const meter = document.getElementById('pw-meter');
+      meter.className = 'password-meter' + (newPw.value ? ' s' + score : '');
+      const labels = ['太弱', '较弱', '一般', '较强', '很强'];
+      document.getElementById('pw-hint').textContent = newPw.value ? '强度：' + labels[score] : '强度：—';
+      checkMatch();
+    });
+    confirmPw.addEventListener('input', checkMatch);
+
+    function checkMatch() {
+      const el = document.getElementById('pw-match');
+      if (!confirmPw.value) { el.textContent = ''; return; }
+      el.textContent = newPw.value === confirmPw.value ? '两次输入一致' : '两次输入不一致';
+      el.style.color = newPw.value === confirmPw.value ? 'var(--success)' : 'var(--danger)';
+    }
+
+    document.getElementById('password-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const oldPassword = document.getElementById('old-password').value;
+      const next = newPw.value;
+      if (next !== confirmPw.value) { R2.toast('两次输入的新密码不一致', 'error'); return; }
+      if (next.length < 15) { R2.toast('新密码至少 15 位', 'error'); return; }
+
+      const btn = document.getElementById('password-submit');
+      R2.setBusy(btn, true, '保存中…');
+      try {
+        await R2.request(BASE_PATH + '/api/password/change', {
+          method: 'POST',
+          body: { old_password: oldPassword, new_password: next },
+        });
+        R2.toast('密码修改成功', 'success');
+        document.getElementById('password-form').reset();
+        document.getElementById('pw-meter').className = 'password-meter';
+        document.getElementById('pw-hint').textContent = '强度：—';
+        document.getElementById('pw-match').textContent = '';
+        document.getElementById('default-password-alert').hidden = true;
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    document.getElementById('generate-password').addEventListener('click', () => {
+      const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+      const lower = 'abcdefghijkmnopqrstuvwxyz';
+      const digits = '23456789';
+      const special = '!@#$%^&*-_=+?';
+      const all = upper + lower + digits + special;
+      const pick = (s) => s[crypto.getRandomValues(new Uint32Array(1))[0] % s.length];
+      let pw = pick(upper) + pick(lower) + pick(digits) + pick(special);
+      for (let i = 0; i < 20; i++) pw += pick(all);
+      pw = pw.split('').sort(() => Math.random() - 0.5).join('');
+
+      newPw.value = pw;
+      confirmPw.value = pw;
+      newPw.dispatchEvent(new Event('input'));
+      checkMatch();
+      document.getElementById('generated-pw').textContent = pw;
+      document.getElementById('password-result-modal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    });
+
+    document.getElementById('copy-generated').addEventListener('click', () => {
+      R2.copy(document.getElementById('generated-pw').textContent);
+    });
+
+    /* ---------- API 示例 ---------- */
+    const ORIGIN = PUBLIC_BASE || location.origin;
+    document.getElementById('base-url-hint').textContent = ORIGIN + BASE_PATH;
+    const SAMPLES = {
+      upload: [
+        '# 获取上传签名（PUT 到返回的 upload_url）',
+        'curl -X POST "' + ORIGIN + '/api/sign/upload" \\',
+        '  -H "X-API-Key: <API_KEY>" \\',
+        '  -H "Content-Type: application/json" \\',
+        '  -d \'{"filename":"report.pdf","content_type":"application/pdf"}\'',
+        '',
+        '# 上传完成后确认入库',
+        'curl -X POST "' + ORIGIN + '/api/files/<FILE_ID>/confirm" \\',
+        '  -H "X-API-Key: <API_KEY>"',
+      ].join('\n'),
+      put: [
+        '# 生成 Sign PUT 链接（可直接在其他设备使用）',
+        'curl -X POST "' + ORIGIN + '/api/sign/put" \\',
+        '  -H "X-API-Key: <API_KEY>" \\',
+        '  -H "Content-Type: application/json" \\',
+        '  -d \'{"filename":"backup.zip","expires_in":86400}\'',
+        '',
+        '# 用返回的 upload_url 直接上传',
+        'curl -X PUT -T "./backup.zip" "<UPLOAD_URL>"',
+      ].join('\n'),
+      list: [
+        '# 文件列表（分页 / 状态 / 文件名搜索）',
+        'curl "' + ORIGIN + '/api/files?page=1&page_size=20&status=all&filename=report" \\',
+        '  -H "X-API-Key: <API_KEY>"',
+      ].join('\n'),
+      download: [
+        '# 获取 5 分钟有效的下载链接',
+        'curl "' + ORIGIN + '/api/files/<FILE_ID>/download-url" \\',
+        '  -H "X-API-Key: <API_KEY>"',
+        '',
+        '# 或使用 Key 直接签名',
+        'curl -X POST "' + ORIGIN + '/api/sign/download" \\',
+        '  -H "X-API-Key: <API_KEY>" \\',
+        '  -H "Content-Type: application/json" \\',
+        '  -d \'{"key":"uploads/1/report_250101120000ab12.pdf"}\'',
+      ].join('\n'),
+    };
+
+    function renderSample(tab) {
+      document.getElementById('code-sample').textContent = SAMPLES[tab] || '';
+    }
+    document.querySelectorAll('[data-code-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-code-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+        renderSample(btn.dataset.codeTab);
+      });
+    });
+    renderSample('upload');
+
+    const copySample = document.getElementById('copy-sample');
+    if (copySample) copySample.addEventListener('click', () => {
+      R2.copy(document.getElementById('code-sample').textContent);
+    });
+
+    async function logoutConfirm() {
+      const ok = await R2.confirm({
+        title: '退出登录',
+        message: '确定要退出当前账号吗？',
+        confirmText: '退出',
+        danger: false,
+      });
+      if (ok) doLogout();
+    }
+
+    if (sessionStorage.getItem('must_change_password') === 'true') {
+      document.getElementById('default-password-alert').hidden = false;
+      sessionStorage.removeItem('must_change_password');
+    }
+  </script>
+</body>
+</html>

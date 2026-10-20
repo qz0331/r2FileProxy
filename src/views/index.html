@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#4338ca">
+  <title>{{ .title }} · R2 Proxy</title>
+  <link rel="stylesheet" href="{{ .basePath }}/static/app.css?v=e3b43c1e">
+  <script>
+    // 主题初始化：在样式渲染前应用，避免深色模式闪白
+    (function () {
+      try {
+        var t = localStorage.getItem('r2proxy-theme') || 'auto';
+        if (t !== 'auto') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+
+</head>
+<body class="app">
+  {{ template "topbar" . }}
+
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">概览</h1>
+        <p class="page-desc">上传文件、创建分享链接，查看存储用量与最近文件</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="btn-group">
+        <a class="btn btn-soft" href="{{ .basePath }}/files">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+          全部文件
+        </a>
+        <button class="btn btn-primary" type="button" id="btn-open-upload">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          上传文件
+        </button>
+      </div>
+    </div>
+
+    <!-- 统计 -->
+    <div class="stat-grid" style="margin-bottom:16px">
+      <div class="stat">
+        <div class="stat-label">文件总数</div>
+        <div class="stat-value">{{ .stats.Total }}</div>
+        <div class="stat-label" style="margin-top:2px">已确认 {{ .stats.Confirmed }} · 待确认 {{ .stats.Pending }}</div>
+      </div>
+      <div class="stat" title="按数据库记录汇总的原始大小">
+        <div class="stat-label">我的文件（记录统计）</div>
+        <div class="stat-value">{{ formatSize .stats.Size }}</div>
+        {{ if gt .stats.Stored 0 }}
+        <div class="stat-label" style="margin-top:2px">R2 实占 {{ formatSize .stats.Stored }}</div>
+        {{ end }}
+      </div>
+      <div class="stat" title="R2 ListObjectsV2 实时统计整个桶的对象总大小（含其他工具上传的文件）">
+        <div class="stat-label">R2 桶实际占用（官方）</div>
+        <div class="stat-value">{{ if .usage.FetchedAt }}{{ formatSize .usage.BucketBytes }}{{ else }}—{{ end }}</div>
+        <div class="stat-label" style="margin-top:2px">
+          {{ if .usage.FetchedAt }}{{ .usage.BucketObjects }} 个对象 · {{ .usage.FetchedAt }}{{ else }}统计中或不可用{{ end }}
+        </div>
+        {{ if and .usage.FetchedAt (gt .usage.ExternalCount 0) }}
+        <div class="stat-label" style="margin-top:2px" title="桶里存在但本服务数据库没有记录的对象">
+          其中 {{ .usage.ExternalCount }} 个 / {{ formatSize .usage.ExternalBytes }} 不在本服务记录
+        </div>
+        {{ end }}
+        {{ if and .usage.FetchedAt (gt .usage.MissingCount 0) }}
+        <div class="stat-label" style="margin-top:2px;color:var(--warning)" title="数据库有记录但桶里已不存在">
+          {{ .usage.MissingCount }} 条记录在桶中已不存在
+        </div>
+        {{ end }}
+      </div>
+      <div class="stat">
+        <div class="stat-label">生效中的设备分享</div>
+        <div class="stat-value">{{ .shareCount }}</div>
+        <div class="stat-label" style="margin-top:2px"><a href="{{ .basePath }}/shares">管理 →</a></div>
+      </div>
+    </div>
+
+    <!-- 上传面板 -->
+    <section class="card" id="upload-card">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/></svg>
+          上传
+        </div>
+        <div class="spacer"></div>
+        <div class="tabs" role="tablist">
+          <button class="tab active" type="button" data-upload-mode="file">本地上传</button>
+          <button class="tab" type="button" data-upload-mode="url">URL 下载</button>
+          <button class="tab" type="button" data-upload-mode="putlink">Sign PUT 链接</button>
+        </div>
+      </div>
+
+      <!-- 本地上传 -->
+      <div class="card-body" data-upload-panel="file">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择或拖拽文件上传">
+          <span class="dz-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5-5 5 5"/><path d="M12 5v12"/></svg>
+          </span>
+          <div class="dz-title">点击选择文件，或把文件拖到这里</div>
+          <div class="dz-hint" id="upload-limit-hint">支持多选 · 通过服务器中转上传，自动大文件分片与文本压缩</div>
+          <input type="file" id="file-input" multiple hidden>
+        </div>
+        <div id="upload-list" class="list" style="margin-top:6px"></div>
+      </div>
+
+      <!-- URL 下载 -->
+      <div class="card-body" data-upload-panel="url" hidden>
+        <form id="url-form" class="form-grid">
+          <div class="field full">
+            <label class="label" for="url-input">文件 URL</label>
+            <input class="input" id="url-input" type="url" placeholder="https://example.com/file.pdf 或 GitHub 仓库地址" autocomplete="off" spellcheck="false">
+            <p class="hint">服务器在后台下载并上传到 R2，关闭页面也不会中断。GitHub 仓库会自动打包为 zip。</p>
+          </div>
+          <div class="field">
+            <label class="label" for="url-filename">自定义文件名（可选）</label>
+            <input class="input" id="url-filename" type="text" maxlength="200" placeholder="留空自动识别">
+          </div>
+          <div class="field">
+            <label class="label" for="url-remark">备注（可选）</label>
+            <input class="input" id="url-remark" type="text" maxlength="256" placeholder="例如：参考资料">
+          </div>
+          <div class="full">
+            <button class="btn btn-primary" type="submit" id="url-submit">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+              创建后台下载任务
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Sign PUT 链接 -->
+      <div class="card-body" data-upload-panel="putlink" hidden>
+        <form id="putlink-form" class="form-grid">
+          <div class="field">
+            <label class="label" for="put-filename">文件名</label>
+            <input class="input" id="put-filename" type="text" maxlength="200" placeholder="例如 backup.zip" required>
+          </div>
+          <div class="field">
+            <label class="label" for="put-expires">有效期</label>
+            <select class="select" id="put-expires">
+              <option value="3600">1 小时</option>
+              <option value="21600">6 小时</option>
+              <option value="86400" selected>24 小时</option>
+              <option value="259200">3 天</option>
+              <option value="604800">7 天</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="put-remark">备注（可选）</label>
+            <input class="input" id="put-remark" type="text" maxlength="256" placeholder="说明这个链接的用途">
+          </div>
+          <div class="field">
+            <label class="label" for="put-prefix">存储前缀（可选）</label>
+            <input class="input" id="put-prefix" type="text" maxlength="64" placeholder="留空使用 putlink">
+          </div>
+          <div class="full">
+            <button class="btn btn-primary" type="submit" id="putlink-submit">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 20"/></svg>
+              生成 Sign PUT 链接
+            </button>
+            <p class="hint" style="margin-top:8px">生成的链接可直接用 <span class="kbd">curl -X PUT</span> 上传，适合脚本与在其他设备使用。上传后回到本页点击“确认”即可入库。</p>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 下载任务 -->
+    <section class="card" id="tasks-card" hidden>
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          下载任务
+          <span class="badge badge-brand" id="task-count">0</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="refreshTasks()">刷新</button>
+        <button class="btn btn-sm" type="button" onclick="clearTasks()">清空已完成</button>
+      </div>
+      <div class="list" id="task-list"></div>
+    </section>
+
+    <!-- 待确认的上传链接 -->
+    <section class="card" id="putlink-card" hidden>
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          待确认的上传链接
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="loadPutLinks()">刷新</button>
+      </div>
+      <div class="list" id="putlink-list"></div>
+    </section>
+
+    <!-- 最近文件 -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+          最近文件
+        </div>
+        <div class="spacer"></div>
+        <a class="btn btn-sm btn-soft" href="{{ .basePath }}/files">查看全部 / 搜索 →</a>
+      </div>
+      <div class="list" id="recent-list">
+        {{ range .recent }}
+        <div class="list-row" data-id="{{ .ID }}" data-name="{{ .Filename }}">
+          <span class="file-icon">
+            {{ if eq .Status "confirmed" }}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg>
+            {{ else if eq .Status "pending" }}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            {{ else }}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+            {{ end }}
+          </span>
+          <div class="file-main">
+            <div class="file-name">{{ .Filename }}</div>
+            <div class="file-meta">
+              {{ if eq .Status "confirmed" }}
+              <span class="badge badge-success"><span class="dot"></span>已确认</span>
+              {{ else if eq .Status "pending" }}
+              <span class="badge badge-warning"><span class="dot"></span>待确认</span>
+              {{ else }}
+              <span class="badge badge-danger"><span class="dot"></span>失败</span>
+              {{ end }}
+              <span>{{ .FormatSize }}</span>
+              <span class="sep"></span>
+              <span>{{ timeAgo .CreatedAt }}</span>
+            </div>
+          </div>
+          <div class="row-actions">
+            {{ if eq .Status "confirmed" }}
+            <button class="icon-btn" type="button" title="下载" onclick="openDownload({{ .ID }})">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            </button>
+            {{ else }}
+            <button class="icon-btn" type="button" title="确认上传" onclick="confirmFile({{ .ID }})">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            </button>
+            {{ end }}
+          </div>
+        </div>
+        {{ else }}
+        <div class="empty">
+          <div class="empty-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+          </div>
+          <div class="empty-title">还没有文件</div>
+          <div class="empty-desc">把文件拖进上方上传区域即可开始</div>
+        </div>
+        {{ end }}
+      </div>
+    </section>
+  </main>
+
+  <!-- 下载链接弹窗 -->
+  <div class="modal" id="download-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div style="min-width:0"><div class="modal-title">下载链接</div><div class="modal-sub" id="dl-name"></div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="link-box" style="margin-bottom:12px">
+          <code id="dl-url"></code>
+          <button class="icon-btn" type="button" id="dl-copy" title="复制">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <div id="dl-qr" class="qr-wrap" hidden></div>
+        <div class="chip-list" id="dl-meta" style="margin-top:12px"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" type="button" id="dl-qr-toggle">二维码</button>
+        <button class="btn btn-primary" type="button" id="dl-go">开始下载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sign PUT 链接结果弹窗 -->
+  <div class="modal" id="putlink-modal">
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div style="min-width:0">
+          <div class="modal-title">Sign PUT 链接已生成</div>
+          <div class="modal-sub" id="putlink-name"></div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="label" style="margin-bottom:6px">上传地址（PUT）</div>
+        <div class="link-box" style="margin-bottom:12px">
+          <code id="putlink-url"></code>
+          <button class="icon-btn" type="button" id="putlink-copy" title="复制">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+
+        <div class="tabs" style="margin-bottom:10px">
+          <button class="tab active" type="button" data-put-tab="curl">curl</button>
+          <button class="tab" type="button" data-put-tab="python">Python</button>
+          <button class="tab" type="button" data-put-tab="powershell">PowerShell</button>
+        </div>
+        <pre class="pre" id="putlink-code" style="max-height:180px"></pre>
+
+        <div class="btn-group" style="margin-top:12px">
+          <a class="btn btn-sm btn-soft" id="putlink-mobile" href="#" target="_blank" rel="noopener">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+            手机上传页
+          </a>
+          <span class="hint" style="align-self:center">在手机上打开该页面即可点选文件上传</span>
+        </div>
+
+        <div id="putlink-qr" class="qr-wrap" style="margin-top:12px" hidden></div>
+        <div class="chip-list" id="putlink-meta" style="margin-top:12px"></div>
+        <p class="hint" style="margin-top:10px">上传完成后回到本页点击对应文件的“确认上传”，或调用 <span class="kbd">POST /api/files/{id}/confirm</span>。</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" type="button" id="putlink-qr-toggle">二维码</button>
+        <button class="btn btn-primary" type="button" data-close>完成</button>
+      </div>
+    </div>
+  </div>
+
+  {{ template "scripts" . }}
+  <script>
+    const BASE_PATH = '{{ .basePath }}';
+    let tasksTimer = null;
+    let currentDownload = null;
+    let currentPutLink = null;
+    let currentPutTab = 'curl';
+
+    /* ---------- Tab 切换 ---------- */
+    document.querySelectorAll('[data-upload-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-upload-mode]').forEach((b) => b.classList.toggle('active', b === btn));
+        const mode = btn.dataset.uploadMode;
+        document.querySelectorAll('[data-upload-panel]').forEach((panel) => {
+          panel.hidden = panel.dataset.uploadPanel !== mode;
+        });
+      });
+    });
+
+    document.getElementById('btn-open-upload').addEventListener('click', () => {
+      document.getElementById('upload-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(() => document.getElementById('dropzone').focus(), 300);
+    });
+
+    // 显示服务端上传上限
+    R2.uploadLimit().then((limit) => {
+      const el = document.getElementById('upload-limit-hint');
+      if (el && limit > 0) el.textContent += ' · 单文件最大 ' + R2.formatSize(limit);
+    });
+
+    /* ---------- 本地上传（代理上传，带进度） ---------- */
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+    const uploadList = document.getElementById('upload-list');
+
+    function addUploadRow(file) {
+      const row = document.createElement('div');
+      row.className = 'upload-item';
+      row.innerHTML =
+        '<div class="upload-item-head">' +
+        '<span class="name"></span>' +
+        '<span class="pct">等待中</span>' +
+        '</div>' +
+        '<div class="progress"><span></span></div>';
+      row.querySelector('.name').textContent = file.name + ' · ' + R2.formatSize(file.size);
+      uploadList.prepend(row);
+      return {
+        setProgress(pct) {
+          row.querySelector('.progress > span').style.width = Math.round(pct * 100) + '%';
+          row.querySelector('.pct').textContent = Math.round(pct * 100) + '%';
+        },
+        setText(text, ok) {
+          row.querySelector('.pct').textContent = text;
+          if (ok === true) row.querySelector('.progress > span').style.background = 'linear-gradient(90deg,#12b76a,#039855)';
+          if (ok === false) row.querySelector('.progress > span').style.background = 'linear-gradient(90deg,#f97066,#d92d20)';
+        },
+        removeLater() { setTimeout(() => row.remove(), 4000); },
+      };
+    }
+
+    async function uploadOne(file) {
+      if (!file.name || file.name.length > 200 || /[\/\\]|\.\./.test(file.name)) {
+        R2.toast('文件名不合法：' + file.name, 'error');
+        return;
+      }
+      const tooBig = await R2.checkUploadSize(file);
+      if (tooBig) { R2.toast(file.name + '：' + tooBig, 'error'); return; }
+      const ui = addUploadRow(file);
+      try {
+        const url = BASE_PATH + '/api/upload?filename=' + encodeURIComponent(file.name);
+        const result = await R2.postFile(url, file, (p) => ui.setProgress(p * 0.98));
+        ui.setProgress(1);
+        ui.setText('完成', true);
+        ui.removeLater();
+        R2.toast('上传成功：' + file.name, 'success');
+        scheduleReload();
+      } catch (err) {
+        ui.setText(err.message || '失败', false);
+        R2.toast(err.message || '上传失败', 'error');
+      }
+    }
+
+    let reloadTimer = null;
+    function scheduleReload() {
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => location.reload(), 900);
+    }
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    ['dragenter', 'dragover'].forEach((ev) => dropzone.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover');
+    }));
+    ['dragleave', 'drop'].forEach((ev) => dropzone.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dragover');
+    }));
+    dropzone.addEventListener('drop', (e) => {
+      Array.from(e.dataTransfer.files || []).forEach(uploadOne);
+    });
+    fileInput.addEventListener('change', () => {
+      Array.from(fileInput.files || []).forEach(uploadOne);
+      fileInput.value = '';
+    });
+
+    /* ---------- URL 下载 ---------- */
+    document.getElementById('url-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = document.getElementById('url-input').value.trim();
+      const filename = document.getElementById('url-filename').value.trim();
+      const remark = document.getElementById('url-remark').value.trim();
+      if (!url) { R2.toast('请输入 URL', 'error'); return; }
+
+      const btn = document.getElementById('url-submit');
+      R2.setBusy(btn, true, '提交中…');
+      try {
+        await R2.request(BASE_PATH + '/api/download-tasks', {
+          method: 'POST',
+          body: { url, filename, remark },
+        });
+        R2.toast('任务已创建，正在后台下载', 'success');
+        document.getElementById('url-input').value = '';
+        document.getElementById('url-filename').value = '';
+        document.getElementById('url-remark').value = '';
+        refreshTasks();
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    /* ---------- Sign PUT 链接 ---------- */
+    document.getElementById('putlink-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const filename = document.getElementById('put-filename').value.trim();
+      if (!filename) { R2.toast('请输入文件名', 'error'); return; }
+
+      const btn = document.getElementById('putlink-submit');
+      R2.setBusy(btn, true, '生成中…');
+      try {
+        const result = await R2.request(BASE_PATH + '/api/sign/put', {
+          method: 'POST',
+          body: {
+            filename,
+            expires_in: parseInt(document.getElementById('put-expires').value, 10),
+            remark: document.getElementById('put-remark').value.trim(),
+            prefix: document.getElementById('put-prefix').value.trim(),
+          },
+        });
+        showPutLink(result.data);
+        loadPutLinks();
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    function putCode(data, tab) {
+      const url = data.upload_url;
+      const name = data.filename || 'file';
+      if (tab === 'python') {
+        return 'import requests\n\nurl = "' + url + '"\nwith open("' + name + '", "rb") as f:\n    r = requests.put(url, data=f)\n    print(r.status_code, r.text)';
+      }
+      if (tab === 'powershell') {
+        return 'curl.exe -X PUT -T ".\\' + name + '" "' + url + '"';
+      }
+      return 'curl -X PUT -T "' + name + '" \\\n  "' + url + '"';
+    }
+
+    function showPutLink(data) {
+      currentPutLink = data;
+      document.getElementById('putlink-name').textContent = data.filename + ' · ' + R2.countdown(data.expires_in) + '内有效';
+      document.getElementById('putlink-url').textContent = data.upload_url;
+      document.getElementById('putlink-code').textContent = putCode(data, currentPutTab);
+
+      const meta = document.getElementById('putlink-meta');
+      meta.innerHTML = '';
+      [
+        ['文件 ID', data.file_id],
+        ['过期时间', R2.formatTime(data.expires_at)],
+        ['存储键', data.key],
+      ].forEach(([label, value]) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = label + '：' + value;
+        meta.appendChild(chip);
+      });
+
+      const mobile = document.getElementById('putlink-mobile');
+      mobile.href = data.mobile_upload_url || (BASE_PATH + '/put?url=' + encodeURIComponent(data.upload_url));
+
+      document.getElementById('putlink-qr').hidden = true;
+      document.getElementById('putlink-modal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    document.querySelectorAll('[data-put-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentPutTab = btn.dataset.putTab;
+        document.querySelectorAll('[data-put-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+        if (currentPutLink) document.getElementById('putlink-code').textContent = putCode(currentPutLink, currentPutTab);
+      });
+    });
+
+    document.getElementById('putlink-copy').addEventListener('click', () => {
+      if (currentPutLink) R2.copy(currentPutLink.upload_url);
+    });
+
+    document.getElementById('putlink-qr-toggle').addEventListener('click', () => {
+      const box = document.getElementById('putlink-qr');
+      if (!box.hidden) { box.hidden = true; return; }
+      box.hidden = false;
+      R2.qrInto(box, currentPutLink.upload_url);
+    });
+
+    /* ---------- 下载任务 ---------- */
+    function taskStatus(task) {
+      switch (task.Status) {
+        case 'completed': return ['badge-success', '已完成'];
+        case 'downloading': return ['badge-info', '下载中'];
+        case 'pending': return ['badge', '排队中'];
+        case 'cancelled': return ['badge-warning', '已取消'];
+        default: return ['badge-danger', '失败'];
+      }
+    }
+
+    function shortURL(raw) {
+      try {
+        const u = new URL(raw);
+        const path = u.pathname.length > 48 ? u.pathname.slice(0, 45) + '…' : u.pathname;
+        return u.host + path;
+      } catch (e) {
+        return String(raw || '').slice(0, 60);
+      }
+    }
+
+    function renderTasks(tasks) {
+      const card = document.getElementById('tasks-card');
+      const list = document.getElementById('task-list');
+      document.getElementById('task-count').textContent = tasks.length;
+      if (!tasks.length) { card.hidden = true; list.innerHTML = ''; return; }
+      card.hidden = false;
+
+      list.innerHTML = tasks.map((task) => {
+        const [cls, text] = taskStatus(task);
+        const progress = task.Size > 0 ? Math.min(100, Math.round((task.Downloaded || 0) * 100 / task.Size)) : 0;
+        const running = task.Status === 'downloading' || task.Status === 'pending';
+        const title = task.Filename || shortURL(task.URL || '');
+        return '' +
+          '<div class="list-row" data-task="' + task.ID + '">' +
+            '<div class="file-main">' +
+              '<div class="file-name">' + R2.escapeHTML(title) + '</div>' +
+              '<div class="file-meta">' +
+                '<span class="badge ' + cls + '"><span class="dot"></span>' + text + '</span>' +
+                (task.Size > 0 ? '<span>' + R2.formatSize(task.Size) + '</span>' : '') +
+                '<span class="sep"></span><span>' + R2.formatTime(task.CreatedAt) + '</span>' +
+              '</div>' +
+              (showProgress(task) ? '<div class="progress" style="margin-top:8px"><span style="width:' + progress + '%"></span></div>' : '') +
+              (task.Error ? '<div class="file-remark" style="color:var(--danger)">' + R2.escapeHTML(task.Error) + '</div>' : '') +
+              (task.URL && !task.Filename ? '<div class="file-meta" style="margin-top:4px"><a class="src-link" href="' + R2.escapeHTML(task.URL) + '" target="_blank" rel="noopener noreferrer" title="' + R2.escapeHTML(task.URL) + '">来源：' + R2.escapeHTML(shortURL(task.URL)) + '</a></div>' : '') +
+            '</div>' +
+            '<div class="row-actions">' +
+              (running ? '<button class="icon-btn" title="取消任务" onclick="cancelTask(' + task.ID + ')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6 18 18M18 6 6 18"/></svg></button>' : '') +
+              (!running ? '<button class="icon-btn danger" title="删除任务" onclick="deleteTask(' + task.ID + ')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M9 7V4h6v3"/></svg></button>' : '') +
+            '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    function showProgress(task) {
+      return task.Status === 'downloading' || task.Status === 'pending';
+    }
+
+    async function refreshTasks(silent) {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/download-tasks');
+        const tasks = result.data || [];
+        renderTasks(tasks);
+        const running = tasks.some((t) => t.Status === 'downloading' || t.Status === 'pending');
+        clearTimeout(tasksTimer);
+        if (running) tasksTimer = setTimeout(() => refreshTasks(true), 2500);
+        else if (tasks.some((t) => t.Status === 'completed') && !silent) {
+          clearTimeout(reloadTimer);
+          reloadTimer = setTimeout(() => location.reload(), 1500);
+        }
+      } catch (e) {
+        if (!silent) R2.toast(e.message, 'error');
+      }
+    }
+
+    async function cancelTask(id) {
+      try {
+        await R2.request(BASE_PATH + '/api/download-tasks/' + id + '/cancel', { method: 'POST' });
+        R2.toast('任务已取消', 'success');
+        refreshTasks();
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    async function deleteTask(id) {
+      try {
+        await R2.request(BASE_PATH + '/api/download-tasks/' + id, { method: 'DELETE' });
+        refreshTasks(true);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    async function clearTasks() {
+      const ok = await R2.confirm({ title: '清空任务', message: '将清空所有已结束的下载任务记录，确定继续？', confirmText: '清空' });
+      if (!ok) return;
+      try {
+        const result = await R2.request(BASE_PATH + '/api/download-tasks', { method: 'DELETE' });
+        R2.toast('已清空 ' + ((result.data && result.data.deleted) || 0) + ' 个任务', 'success');
+        refreshTasks(true);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    /* ---------- 待确认上传链接 ---------- */
+    async function loadPutLinks() {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/sign/put');
+        const links = result.data || [];
+        const card = document.getElementById('putlink-card');
+        const list = document.getElementById('putlink-list');
+        if (!links.length) { card.hidden = true; list.innerHTML = ''; return; }
+        card.hidden = false;
+        list.innerHTML = links.map((link) => '' +
+          '<div class="list-row" data-putlink-id="' + link.id + '">' +
+            '<div class="file-main">' +
+              '<div class="file-name">' + R2.escapeHTML(link.filename) + '</div>' +
+              '<div class="file-meta">' +
+                '<span class="badge ' + (link.expired ? 'badge-danger' : 'badge-warning') + '"><span class="dot"></span>' + (link.expired ? '链接已过期' : '等待上传') + '</span>' +
+                '<span class="sep"></span><span>生成于 ' + R2.formatTime(link.created_at) + '</span>' +
+                (link.expires_at ? '<span class="sep"></span><span>链接 ' + R2.formatTime(link.expires_at) + ' 过期</span>' : '') +
+                (link.uploader_ip ? '<span class="sep"></span><span>IP ' + R2.escapeHTML(link.uploader_ip) + '</span>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div class="row-actions">' +
+              '<button class="btn btn-sm" type="button" onclick="regeneratePutLink(' + link.id + ')">重签</button>' +
+              '<button class="btn btn-sm btn-success" type="button" onclick="confirmFile(' + link.id + ')">确认</button>' +
+              '<button class="icon-btn danger" type="button" title="删除这条上传链接" onclick="deletePutLink(' + link.id + ', \'' + R2.escapeHTML(link.filename).replace(/'/g, "\\'") + '\')">' +
+                '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M9 7V4h6v3"/></svg>' +
+              '</button>' +
+            '</div>' +
+          '</div>').join('');
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 删除未使用的 Sign PUT 链接（同时清理待确认记录）
+    async function deletePutLink(id, filename) {
+      const ok = await R2.confirm({
+        title: '删除上传链接',
+        message: '确定删除「' + filename + '」这条待确认的上传链接吗？删除后该 PUT 地址立即失效。',
+        confirmText: '删除',
+      });
+      if (!ok) return;
+      try {
+        await R2.request(BASE_PATH + '/api/files/' + id, { method: 'DELETE' });
+        R2.toast('已删除', 'success');
+        const row = document.querySelector('#putlink-list [data-putlink-id="' + id + '"]');
+        if (row) row.remove();
+        else loadPutLinks();
+        if (!document.querySelector('#putlink-list .list-row')) {
+          const card = document.getElementById('putlink-card');
+          if (card) card.hidden = true;
+        }
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    async function regeneratePutLink(id) {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/sign/put/' + id + '/regenerate', { method: 'POST' });
+        showPutLink(result.data);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    /* ---------- 下载 ---------- */
+    async function openDownload(id) {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/files/' + id + '/download-url');
+        currentDownload = result.data;
+        document.getElementById('dl-name').textContent =
+          currentDownload.filename + ' · ' + R2.formatSize(currentDownload.size);
+        document.getElementById('dl-url').textContent = currentDownload.download_url;
+
+        const meta = document.getElementById('dl-meta');
+        meta.innerHTML = '';
+        [
+          ['链接有效期', R2.countdown(currentDownload.expires_in)],
+          ['下载次数', (currentDownload.download_count || 0) + ' / ' + (currentDownload.download_limit || 10)],
+        ].forEach(([k, v]) => {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = k + '：' + v;
+          meta.appendChild(chip);
+        });
+
+        document.getElementById('dl-qr').hidden = true;
+        R2.openModal('download-modal');
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+    document.getElementById('dl-copy').addEventListener('click', () => currentDownload && R2.copy(currentDownload.download_url));
+    document.getElementById('dl-go').addEventListener('click', () => {
+      if (!currentDownload) return;
+      const a = document.createElement('a');
+      a.href = currentDownload.download_url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+    document.getElementById('dl-qr-toggle').addEventListener('click', () => {
+      const box = document.getElementById('dl-qr');
+      if (!box.hidden) { box.hidden = true; return; }
+      box.hidden = false;
+      R2.qrInto(box, currentDownload.download_url);
+    });
+
+    async function confirmFile(id) {
+      try {
+        await R2.request(BASE_PATH + '/api/files/' + id + '/confirm', { method: 'POST' });
+        R2.toast('已确认', 'success');
+        setTimeout(() => location.reload(), 400);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    /* ---------- 初始化 ---------- */
+    refreshTasks(true);
+    loadPutLinks();
+    setInterval(() => loadPutLinks(), 20000);
+  </script>
+</body>
+</html>

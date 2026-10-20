@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#4338ca">
+  <title>{{ .title }} · R2 Proxy</title>
+  <link rel="stylesheet" href="{{ .basePath }}/static/app.css?v=e3b43c1e">
+  <script>
+    // 主题初始化：在样式渲染前应用，避免深色模式闪白
+    (function () {
+      try {
+        var t = localStorage.getItem('r2proxy-theme') || 'auto';
+        if (t !== 'auto') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+
+</head>
+<body class="app">
+  {{ template "topbar" . }}
+
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">用户管理</h1>
+        <p class="page-desc">创建、查看与删除账号，每个账号都有独立的 API Key</p>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" type="button" id="btn-create">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        创建用户
+      </button>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          用户列表
+          <span class="badge">{{ len .users }}</span>
+        </div>
+        <div class="spacer"></div>
+        <input class="input" id="user-filter" type="search" placeholder="搜索用户名" style="max-width:220px;min-height:36px;padding:6px 12px;font-size:13px">
+      </div>
+
+      <div class="list" id="user-list">
+        {{ range .users }}
+        <div class="list-row" data-username="{{ .Username }}">
+          <span class="file-icon" style="border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:0;font-weight:700;font-size:13px">{{ initial .Username }}</span>
+          <div class="file-main">
+            <div class="file-name">
+              {{ .Username }}
+              {{ if .IsAdmin }}<span class="badge badge-brand" style="margin-left:6px">管理员</span>{{ end }}
+              {{ if eq .ID $.user.ID }}<span class="badge" style="margin-left:4px">当前账号</span>{{ end }}
+            </div>
+            <div class="file-meta">
+              <span>{{ if eq .UserType "api" }}仅 API Key{{ else if eq .UserType "web" }}仅密码{{ else }}密码 + API Key{{ end }}</span>
+              <span class="sep"></span>
+              <span>创建于 {{ .CreatedAt }}</span>
+            </div>
+            <div class="file-actions">
+              <button class="btn btn-sm btn-soft" type="button" onclick="showKey(this)" data-username="{{ .Username }}" data-key="{{ .APIKey }}">查看 API Key</button>
+              <a class="btn btn-sm" href="{{ $.basePath }}/files">查看文件</a>
+              {{ if ne .ID $.user.ID }}
+              <button class="btn btn-sm btn-ghost" type="button" style="color:var(--danger)" onclick="removeUser({{ .ID }}, '{{ .Username }}')">删除</button>
+              {{ end }}
+            </div>
+          </div>
+        </div>
+        {{ end }}
+      </div>
+    </section>
+  </main>
+
+  <!-- 创建用户 -->
+  <div class="modal" id="create-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title">创建用户</div><div class="modal-sub">系统会为新用户自动生成 API Key</div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="create-form" class="form-grid" style="grid-template-columns:1fr">
+          <div class="field">
+            <label class="label" for="new-username">用户名</label>
+            <div class="input-with-btn">
+              <input class="input" id="new-username" type="text" minlength="3" maxlength="64" required placeholder="3-64 个字符" autocomplete="off">
+              <button class="btn" type="button" id="gen-username">随机</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="new-password">密码</label>
+            <div class="input-with-btn">
+              <input class="input" id="new-password" type="text" minlength="15" required placeholder="至少 15 位，含大小写/数字/符号">
+              <button class="btn" type="button" id="gen-password">随机</button>
+            </div>
+            <div class="hint" id="pw-hint">强密码会同时写入下方结果框，便于复制给用户。</div>
+          </div>
+          <div class="field">
+            <label class="label" for="new-usertype">账号类型</label>
+            <select class="select" id="new-usertype">
+              <option value="both">密码 + API Key（推荐）</option>
+              <option value="web">仅密码登录</option>
+              <option value="api">仅 API Key</option>
+            </select>
+          </div>
+        </form>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="button" id="create-submit">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Key -->
+  <div class="modal" id="key-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title">API Key</div><div class="modal-sub" id="key-username"></div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="link-box">
+          <code id="key-value"></code>
+          <button class="icon-btn" type="button" id="key-copy" title="复制">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-block" type="button" data-close>关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建结果 -->
+  <div class="modal" id="result-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title">用户已创建</div><div class="modal-sub">请把下面信息发给对方，密码不会再次显示</div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <pre class="pre" id="result-text"></pre>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" type="button" id="result-copy">复制全部</button>
+        <button class="btn btn-primary" type="button" data-close>完成</button>
+      </div>
+    </div>
+  </div>
+
+  {{ template "scripts" . }}
+  <script>
+    const BASE_PATH = '{{ .basePath }}';
+    let usernames = [];
+
+    async function loadUsernames() {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/users');
+        usernames = (result.data || []).map((u) => (u.username || '').toLowerCase());
+      } catch (e) { /* ignore */ }
+    }
+    loadUsernames();
+
+    document.getElementById('btn-create').addEventListener('click', () => {
+      document.getElementById('create-form').reset();
+      document.getElementById('new-usertype').value = 'both';
+      R2.openModal('create-modal');
+    });
+
+    function randomPassword() {
+      const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+      const lower = 'abcdefghijkmnopqrstuvwxyz';
+      const digits = '23456789';
+      const special = '!@#$%^&*-_=+?';
+      const all = upper + lower + digits + special;
+      const pick = (s) => s[crypto.getRandomValues(new Uint32Array(1))[0] % s.length];
+      let pw = pick(upper) + pick(lower) + pick(digits) + pick(special);
+      for (let i = 0; i < 20; i++) pw += pick(all);
+      return pw.split('').sort(() => Math.random() - 0.5).join('');
+    }
+
+    document.getElementById('gen-password').addEventListener('click', () => {
+      document.getElementById('new-password').value = randomPassword();
+    });
+
+    document.getElementById('gen-username').addEventListener('click', () => {
+      const letters = 'abcdefghijklmnopqrstuvwxyz';
+      for (let i = 0; i < 60; i++) {
+        const len = 4 + Math.floor(Math.random() * 3);
+        let name = '';
+        for (let j = 0; j < len; j++) name += letters[Math.floor(Math.random() * letters.length)];
+        if (!usernames.includes(name)) {
+          document.getElementById('new-username').value = name;
+          return;
+        }
+      }
+      R2.toast('生成失败，请手动输入', 'error');
+    });
+
+    document.getElementById('create-submit').addEventListener('click', async () => {
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-password').value;
+      const userType = document.getElementById('new-usertype').value;
+      if (username.length < 3) { R2.toast('用户名至少 3 个字符', 'error'); return; }
+      if (password.length < 15) { R2.toast('密码至少 15 位', 'error'); return; }
+
+      const btn = document.getElementById('create-submit');
+      R2.setBusy(btn, true, '创建中…');
+      try {
+        const result = await R2.request(BASE_PATH + '/api/users', {
+          method: 'POST',
+          body: { username, password, user_type: userType },
+        });
+        const data = result.data;
+        document.getElementById('result-text').textContent = [
+          '用户名：' + data.username,
+          '密码：' + password,
+          'API Key：' + data.api_key,
+          '角色：' + (data.is_admin ? '管理员' : '普通用户'),
+          '',
+          '登录地址：' + location.origin + BASE_PATH + '/login',
+        ].join('\n');
+        R2.closeModal('create-modal');
+        R2.openModal('result-modal');
+        usernames.push(username.toLowerCase());
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    document.getElementById('result-copy').addEventListener('click', () => {
+      R2.copy(document.getElementById('result-text').textContent);
+    });
+
+    function showKey(btn) {
+      const key = btn.dataset.key || '';
+      document.getElementById('key-username').textContent = '用户：' + (btn.dataset.username || '');
+      document.getElementById('key-value').textContent = key;
+      R2.openModal('key-modal');
+    }
+
+    document.getElementById('key-copy').addEventListener('click', () => {
+      R2.copy(document.getElementById('key-value').textContent);
+    });
+
+    async function removeUser(id, username) {
+      const ok = await R2.confirm({
+        title: '删除用户',
+        message: '确定删除用户「' + username + '」吗？R2 中已上传的文件对象不会被删除。',
+        confirmText: '删除',
+      });
+      if (!ok) return;
+      try {
+        await R2.request(BASE_PATH + '/api/users/' + id, { method: 'DELETE' });
+        R2.toast('用户已删除', 'success');
+        setTimeout(() => location.reload(), 500);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    const filter = document.getElementById('user-filter');
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      document.querySelectorAll('#user-list .list-row').forEach((row) => {
+        row.hidden = q && !row.dataset.username.toLowerCase().includes(q);
+      });
+    });
+  </script>
+</body>
+</html>

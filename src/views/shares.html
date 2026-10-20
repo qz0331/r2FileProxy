@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#4338ca">
+  <title>设备分享 · R2 Proxy</title>
+  <link rel="stylesheet" href="{{ .basePath }}/static/app.css?v=e3b43c1e">
+  <script>
+    // 主题初始化：在样式渲染前应用，避免深色模式闪白
+    (function () {
+      try {
+        var t = localStorage.getItem('r2proxy-theme') || 'auto';
+        if (t !== 'auto') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+
+</head>
+<body class="app">
+  {{ template "topbar" . }}
+
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">设备分享</h1>
+        <p class="page-desc">一条链接让手机、平板、脚本都能往你的 R2 传文件</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="btn-group">
+        <button class="btn" type="button" id="btn-new-putlink-top">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          生成 PUT 链接
+        </button>
+        <button class="btn btn-primary" type="button" id="btn-create">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          新建分享
+        </button>
+      </div>
+    </div>
+
+    <div class="alert alert-info" style="margin-bottom:16px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5h.01"/></svg>
+      <div>
+        <b>两种分享方式</b>
+        <div><b>极简上传链接</b>：无需登录，其他设备打开链接即可上传/下载，文件归属你；<b>Sign PUT 链接</b>：生成单个文件的 PUT 地址，适合 curl、脚本或自动化流程。</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 20"/></svg>
+          我的分享
+          <span class="badge" id="share-count-badge">{{ len .shares }}</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="loadShares()">刷新</button>
+      </div>
+      <div class="list" id="share-list">
+        {{ range .shares }}
+        <div class="list-row" data-share-id="{{ .ID }}">
+          <span class="file-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
+          </span>
+          <div class="file-main">
+            <div class="file-name">{{ .Name }}</div>
+            <div class="file-meta">
+              <span class="badge {{ if eq .Status "active" }}badge-success{{ else if eq .Status "revoked" }}badge-danger{{ else }}badge-warning{{ end }}">
+                <span class="dot"></span>{{ if eq .Status "active" }}生效中{{ else if eq .Status "expired" }}已过期{{ else if eq .Status "revoked" }}已撤销{{ else }}配额用尽{{ end }}
+              </span>
+              <span>{{ if eq .Mode "both" }}可上传 + 可查看{{ else }}仅上传{{ end }}</span>
+              <span class="sep"></span>
+              <span>已用 {{ .UsedCount }}{{ if gt .MaxUploads 0 }} / {{ .MaxUploads }}{{ end }} 次</span>
+              {{ if gt .UsedSize 0 }}<span class="sep"></span><span>{{ formatSize .UsedSize }}{{ if gt .MaxTotalSize 0 }} / {{ formatSize .MaxTotalSize }}{{ end }}</span>{{ end }}
+              <span class="sep"></span>
+              <span>到期 {{ formatTime .ExpiresAt }}</span>
+            </div>
+            {{ if .Description }}<div class="file-remark">{{ .Description }}</div>{{ end }}
+            <div class="file-actions">
+              <button class="btn btn-sm btn-soft" type="button" onclick="openShareLink({{ .ID }})">链接 / 二维码</button>
+              <button class="btn btn-sm" type="button" onclick="copyShareURL('{{ .Token }}')">复制链接</button>
+              <a class="btn btn-sm" href="{{ $.basePath }}/files?share_id={{ .ID }}">查看文件</a>
+              <button class="btn btn-sm btn-ghost" type="button" onclick="editShare({{ .ID }})">编辑</button>
+              <button class="btn btn-sm btn-ghost" type="button" style="color:var(--danger)" onclick="deleteShare({{ .ID }}, '{{ .Name }}')">删除</button>
+            </div>
+          </div>
+        </div>
+        {{ else }}
+        <div class="empty">
+          <div class="empty-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 20"/></svg>
+          </div>
+          <div class="empty-title">还没有分享</div>
+          <div class="empty-desc">点击右上角「新建分享」，把链接发到手机上就能直接传文件</div>
+        </div>
+        {{ end }}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          待确认的 Sign PUT 链接
+          <span class="badge" id="pending-count-badge">{{ len .pendingLinks }}</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-primary" type="button" id="btn-new-putlink">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          生成链接
+        </button>
+      </div>
+      <div class="list" id="putlink-list">
+        {{ range .pendingLinks }}
+        <div class="list-row" data-link-id="{{ .ID }}">
+          <div class="file-main">
+            <div class="file-name">{{ .Filename }}</div>
+            <div class="file-meta">
+              <span class="badge {{ if .Expired }}badge-danger{{ else }}badge-warning{{ end }}"><span class="dot"></span>{{ if .Expired }}链接已过期{{ else }}等待上传{{ end }}</span>
+              <span class="sep"></span><span>生成于 {{ formatTime .CreatedAt }}</span>
+              {{ if .UploaderIP }}<span class="sep"></span><span>IP {{ .UploaderIP }}</span>{{ end }}
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-sm" type="button" onclick="regenPutLink({{ .ID }})">重签</button>
+            <button class="btn btn-sm btn-success" type="button" onclick="confirmPutLink({{ .ID }})">确认</button>
+            <button class="icon-btn danger" type="button" title="删除这条上传链接" onclick="deletePutLink({{ .ID }}, '{{ .Filename }}')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M9 7V4h6v3"/></svg>
+            </button>
+          </div>
+        </div>
+        {{ else }}
+        <div class="empty">
+          <div class="empty-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <div class="empty-title">没有待确认的上传链接</div>
+          <div class="empty-desc">点击右上角「生成链接」，即可创建一个可直接 PUT 上传的地址</div>
+        </div>
+        {{ end }}
+      </div>
+    </section>
+  </main>
+
+  <!-- 新建 / 编辑分享 -->
+  <div class="modal" id="share-modal">
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title" id="share-modal-title">新建设备分享</div><div class="modal-sub">生成一条免登录的上传链接</div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="share-form" class="form-grid">
+          <div class="field">
+            <label class="label" for="share-name">名称</label>
+            <input class="input" id="share-name" type="text" maxlength="64" placeholder="例如：我的 iPad">
+          </div>
+          <div class="field">
+            <label class="label" for="share-expires">有效期</label>
+            <select class="select" id="share-expires">
+              <option value="60">1 小时</option>
+              <option value="360">6 小时</option>
+              <option value="1440" selected>24 小时</option>
+              <option value="4320">3 天</option>
+              <option value="10080">7 天</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label class="label" for="share-desc">备注（可选）</label>
+            <input class="input" id="share-desc" type="text" maxlength="256" placeholder="会作为上传文件的默认备注">
+          </div>
+          <div class="field">
+            <label class="label" for="share-mode">权限</label>
+            <select class="select" id="share-mode">
+              <option value="upload" selected>仅上传（推荐）</option>
+              <option value="both">上传 + 查看/下载</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="share-prefix">存储前缀（可选）</label>
+            <input class="input" id="share-prefix" type="text" maxlength="64" placeholder="留空使用 share">
+          </div>
+          <div class="field">
+            <label class="label" for="share-max-uploads">最多上传次数</label>
+            <input class="input" id="share-max-uploads" type="number" min="0" step="1" placeholder="0 = 不限制">
+          </div>
+          <div class="field">
+            <label class="label" for="share-max-size">总容量上限（MB）</label>
+            <input class="input" id="share-max-size" type="number" min="0" step="1" placeholder="0 = 不限制">
+          </div>
+          <div class="field">
+            <label class="label" for="share-max-file">单文件上限（MB）</label>
+            <input class="input" id="share-max-file" type="number" min="0" step="1" placeholder="0 = 不限制">
+          </div>
+          <div class="field">
+            <label class="label">状态</label>
+            <label class="switch" style="height:40px">
+              <input type="checkbox" id="share-revoked">
+              <span class="hint">撤销后链接立即失效</span>
+            </label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="button" id="share-save">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 分享链接 -->
+  <div class="modal" id="sharelink-modal">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div style="min-width:0"><div class="modal-title" id="sharelink-title">分享链接</div><div class="modal-sub" id="sharelink-sub"></div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="link-box" style="margin-bottom:12px">
+          <code id="sharelink-url"></code>
+          <button class="icon-btn" type="button" id="sharelink-copy" title="复制">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <div id="sharelink-qr" class="qr-wrap"></div>
+        <div class="chip-list" id="sharelink-meta" style="margin-top:12px"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" type="button" id="sharelink-open">在新标签打开</button>
+        <button class="btn btn-primary" type="button" data-close>完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 生成 Sign PUT 链接 -->
+  <div class="modal" id="putlink-form-modal">
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="modal-title">生成 Sign PUT 链接</div><div class="modal-sub">给其他设备/脚本一个可直接 PUT 上传的地址</div></div>
+        <button class="icon-btn modal-close" type="button" data-close aria-label="关闭">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        {{ template "putlink-form" . }}
+      </div>
+    </div>
+  </div>
+
+  {{ template "putlink-modal" . }}
+
+  {{ template "scripts" . }}
+  <script>
+    const BASE_PATH = '{{ .basePath }}';
+    let shares = [];
+    let editingId = null;
+    let currentShareURL = '';
+
+    async function loadShares() {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/shares');
+        shares = result.data || [];
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      }
+    }
+
+    document.getElementById('btn-create').addEventListener('click', () => {
+      editingId = null;
+      document.getElementById('share-modal-title').textContent = '新建设备分享';
+      document.getElementById('share-save').textContent = '创建';
+      document.getElementById('share-form').reset();
+      document.getElementById('share-expires').value = '1440';
+      document.getElementById('share-mode').value = 'upload';
+      document.getElementById('share-revoked').checked = false;
+      document.getElementById('share-revoked').disabled = true;
+      R2.openModal('share-modal');
+    });
+
+    function editShare(id) {
+      const share = shares.find((s) => s.id === id);
+      const data = share || { name: '', description: '', mode: 'upload', prefix: '', expires_in: 1440 };
+      editingId = id;
+      document.getElementById('share-modal-title').textContent = '编辑分享';
+      document.getElementById('share-save').textContent = '保存';
+      document.getElementById('share-name').value = data.name || '';
+      document.getElementById('share-desc').value = data.description || '';
+      document.getElementById('share-mode').value = data.mode || 'upload';
+      document.getElementById('share-prefix').value = data.prefix || '';
+      document.getElementById('share-max-uploads').value = data.max_uploads || '';
+      document.getElementById('share-max-size').value = data.max_total_size ? Math.round(data.max_total_size / 1048576) : '';
+      document.getElementById('share-max-file').value = data.max_file_size ? Math.round(data.max_file_size / 1048576) : '';
+      document.getElementById('share-revoked').checked = !!data.revoked;
+      document.getElementById('share-revoked').disabled = false;
+      R2.openModal('share-modal');
+    }
+
+    document.getElementById('share-save').addEventListener('click', async () => {
+      const name = document.getElementById('share-name').value.trim();
+      const description = document.getElementById('share-desc').value.trim();
+      const mode = document.getElementById('share-mode').value;
+      const prefix = document.getElementById('share-prefix').value.trim();
+      const maxUploads = parseInt(document.getElementById('share-max-uploads').value || '0', 10) || 0;
+      const maxSizeMB = parseInt(document.getElementById('share-max-size').value || '0', 10) || 0;
+      const maxFileMB = parseInt(document.getElementById('share-max-file').value || '0', 10) || 0;
+
+      const btn = document.getElementById('share-save');
+      R2.setBusy(btn, true, '保存中…');
+      try {
+        if (editingId) {
+          await R2.request(BASE_PATH + '/api/shares/' + editingId, {
+            method: 'PUT',
+            body: {
+              name, description, mode,
+              max_uploads: maxUploads,
+              max_total_size: maxSizeMB * 1048576,
+              max_file_size: maxFileMB * 1048576,
+              revoked: document.getElementById('share-revoked').checked,
+            },
+          });
+          R2.toast('已保存', 'success');
+        } else {
+          const result = await R2.request(BASE_PATH + '/api/shares', {
+            method: 'POST',
+            body: {
+              name, description, mode, prefix,
+              expires_in: parseInt(document.getElementById('share-expires').value, 10),
+              max_uploads: maxUploads,
+              max_total_size: maxSizeMB * 1048576,
+              max_file_size: maxFileMB * 1048576,
+            },
+          });
+          R2.toast('分享已创建', 'success');
+          R2.closeModal('share-modal');
+          prependShare(result.data);
+          showShareLink(result.data);
+          return;
+        }
+        R2.closeModal('share-modal');
+        setTimeout(() => location.reload(), 500);
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    // 把新建的分享直接插到列表顶部，避免刷新页面打断弹窗
+    function prependShare(share) {
+      const list = document.getElementById('share-list');
+      if (!list) return;
+      const empty = list.querySelector('.empty');
+      if (empty) empty.remove();
+      const wrap = document.createElement('div');
+      wrap.innerHTML = shareRowHTML(share);
+      const row = wrap.firstElementChild;
+      if (row) list.prepend(row);
+      // 更新计数
+      const badge = document.getElementById('share-count-badge');
+      if (badge) badge.textContent = String(Number(badge.textContent || '0') + 1);
+      shares.push(share);
+    }
+
+    function shareRowHTML(share) {
+      const statusMap = { active: ['badge-success', '生效中'], expired: ['badge-warning', '已过期'], revoked: ['badge-danger', '已撤销'], quota_exceeded: ['badge-warning', '配额用尽'] };
+      const [cls, text] = statusMap[share.status] || ['badge', share.status];
+      const esc = R2.escapeHTML;
+      return '<div class="list-row" data-share-id="' + share.id + '">' +
+        '<span class="file-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 18v3"/></svg></span>' +
+        '<div class="file-main">' +
+          '<div class="file-name">' + esc(share.name) + '</div>' +
+          '<div class="file-meta">' +
+            '<span class="badge ' + cls + '"><span class="dot"></span>' + text + '</span>' +
+            '<span>' + (share.mode === 'both' ? '可上传 + 可查看' : '仅上传') + '</span>' +
+            '<span class="sep"></span><span>已用 ' + (share.used_count || 0) + (share.max_uploads > 0 ? ' / ' + share.max_uploads : '') + ' 次</span>' +
+            '<span class="sep"></span><span>到期 ' + R2.formatTime(share.expires_at) + '</span>' +
+          '</div>' +
+          (share.description ? '<div class="file-remark">' + esc(share.description) + '</div>' : '') +
+          '<div class="file-actions">' +
+            '<button class="btn btn-sm btn-soft" type="button" onclick="openShareLink(' + share.id + ')">链接 / 二维码</button>' +
+            '<button class="btn btn-sm" type="button" onclick="R2.copy(\'' + share.share_url + '\')">复制链接</button>' +
+            '<a class="btn btn-sm" href="' + BASE_PATH + '/files?share_id=' + share.id + '">查看文件</a>' +
+            '<button class="btn btn-sm btn-ghost" type="button" onclick="editShare(' + share.id + ')">编辑</button>' +
+            '<button class="btn btn-sm btn-ghost" type="button" style="color:var(--danger)" onclick="deleteShare(' + share.id + ', \'' + esc(share.name) + '\')">删除</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    async function openShareLink(id) {
+      await loadShares();
+      const share = shares.find((s) => s.id === id);
+      if (!share) { R2.toast('分享不存在', 'error'); return; }
+      showShareLink(share);
+    }
+
+    function showShareLink(share) {
+      currentShareURL = share.share_url;
+      document.getElementById('sharelink-title').textContent = share.name || '分享链接';
+      document.getElementById('sharelink-sub').textContent =
+        (share.mode === 'both' ? '可上传 + 可查看' : '仅上传') + ' · ' + R2.countdown(Math.max(0, (new Date(share.expires_at) - Date.now()) / 1000)) + '后过期';
+      document.getElementById('sharelink-url').textContent = share.share_url;
+      R2.qrInto(document.getElementById('sharelink-qr'), share.share_url);
+
+      const meta = document.getElementById('sharelink-meta');
+      meta.innerHTML = '';
+      [
+        ['已上传', share.used_count + (share.max_uploads > 0 ? ' / ' + share.max_uploads : '') + ' 次'],
+        ['已用容量', R2.formatSize(share.used_size || 0)],
+      ].forEach(([k, v]) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = k + '：' + v;
+        meta.appendChild(chip);
+      });
+
+      R2.openModal('sharelink-modal');
+    }
+
+    document.getElementById('sharelink-copy').addEventListener('click', () => R2.copy(currentShareURL));
+    document.getElementById('sharelink-open').addEventListener('click', () => window.open(currentShareURL, '_blank'));
+
+    function copyShareURL(token) {
+      const share = shares.find((s) => s.token === token);
+      R2.copy(share ? share.share_url : location.origin + BASE_PATH + '/s/' + token);
+    }
+
+    async function deleteShare(id, name) {
+      const ok = await R2.confirm({
+        title: '删除分享',
+        message: '删除「' + name + '」后链接立即失效，已上传的文件会保留。',
+        confirmText: '删除',
+      });
+      if (!ok) return;
+      try {
+        await R2.request(BASE_PATH + '/api/shares/' + id, { method: 'DELETE' });
+        R2.toast('已删除', 'success');
+        const row = document.querySelector('#share-list [data-share-id="' + id + '"]');
+        if (row) row.remove();
+        const badge = document.getElementById('share-count-badge');
+        if (badge) badge.textContent = String(Math.max(0, Number(badge.textContent || '0') - 1));
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    /* ---------- Sign PUT 链接 ---------- */
+    let currentPutLink = null;
+    let currentPutTab = 'curl';
+
+    function openPutLinkForm() {
+      document.getElementById('putlink-form').reset();
+      document.getElementById('putlink-qr').hidden = true;
+      R2.openModal('putlink-form-modal');
+    }
+    const btnTop = document.getElementById('btn-new-putlink-top');
+    const btnInner = document.getElementById('btn-new-putlink');
+    if (btnTop) btnTop.addEventListener('click', openPutLinkForm);
+    if (btnInner) btnInner.addEventListener('click', openPutLinkForm);
+
+    function putCode(data, tab) {
+      const url = data.upload_url;
+      const name = data.filename || 'file';
+      if (tab === 'python') {
+        return 'import requests\n\nurl = "' + url + '"\nwith open("' + name + '", "rb") as f:\n    r = requests.put(url, data=f)\n    print(r.status_code, r.text)';
+      }
+      if (tab === 'powershell') {
+        return 'curl.exe -X PUT -T ".\\' + name + '" "' + url + '"';
+      }
+      return 'curl -X PUT -T "' + name + '" \\\n  "' + url + '"';
+    }
+
+    function showPutLink(data) {
+      currentPutLink = data;
+      document.getElementById('putlink-name').textContent = data.filename + ' · ' + R2.countdown(data.expires_in) + '内有效';
+      document.getElementById('putlink-url').textContent = data.upload_url;
+      document.getElementById('putlink-code').textContent = putCode(data, currentPutTab);
+
+      const meta = document.getElementById('putlink-meta');
+      meta.innerHTML = '';
+      [
+        ['文件 ID', data.file_id],
+        ['过期时间', R2.formatTime(data.expires_at)],
+        ['存储键', data.key],
+      ].forEach(([k, v]) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = k + '：' + v;
+        meta.appendChild(chip);
+      });
+
+      const mobile = document.getElementById('putlink-mobile');
+      if (mobile) mobile.href = data.mobile_upload_url || (BASE_PATH + '/put?url=' + encodeURIComponent(data.upload_url));
+
+      document.getElementById('putlink-qr').hidden = true;
+      R2.closeModal('putlink-form-modal');
+      R2.openModal('putlink-modal');
+    }
+
+    document.getElementById('putlink-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const filename = document.getElementById('put-filename').value.trim();
+      if (!filename) { R2.toast('请输入文件名', 'error'); return; }
+      const btn = document.getElementById('putlink-submit');
+      R2.setBusy(btn, true, '生成中…');
+      try {
+        const result = await R2.request(BASE_PATH + '/api/sign/put', {
+          method: 'POST',
+          body: {
+            filename,
+            expires_in: parseInt(document.getElementById('put-expires').value, 10),
+            remark: document.getElementById('put-remark').value.trim(),
+            prefix: document.getElementById('put-prefix').value.trim(),
+          },
+        });
+        showPutLink(result.data);
+        prependPendingLink(result.data);
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      } finally {
+        R2.setBusy(btn, false);
+      }
+    });
+
+    document.querySelectorAll('[data-put-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentPutTab = btn.dataset.putTab;
+        document.querySelectorAll('[data-put-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+        if (currentPutLink) document.getElementById('putlink-code').textContent = putCode(currentPutLink, currentPutTab);
+      });
+    });
+
+    document.getElementById('putlink-copy').addEventListener('click', () => {
+      if (currentPutLink) R2.copy(currentPutLink.upload_url);
+    });
+
+    document.getElementById('putlink-qr-toggle').addEventListener('click', () => {
+      const box = document.getElementById('putlink-qr');
+      if (!box.hidden) { box.hidden = true; return; }
+      box.hidden = false;
+      R2.qrInto(box, currentPutLink.upload_url);
+    });
+
+    async function regenPutLink(id) {
+      try {
+        const result = await R2.request(BASE_PATH + '/api/sign/put/' + id + '/regenerate', { method: 'POST' });
+        showPutLink(result.data);
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    async function confirmPutLink(id) {
+      try {
+        await R2.request(BASE_PATH + '/api/files/' + id + '/confirm', { method: 'POST' });
+        R2.toast('已确认入库', 'success');
+        const row = document.querySelector('#putlink-list [data-link-id="' + id + '"]');
+        if (row) row.remove();
+        updatePendingCount(-1);
+        ensurePendingEmptyState();
+      } catch (err) { R2.toast(err.message, 'error'); }
+    }
+
+    // 删除未使用的 Sign PUT 链接（同时清理待确认记录，PUT 地址立即失效）
+    async function deletePutLink(id, filename) {
+      const ok = await R2.confirm({
+        title: '删除上传链接',
+        message: '确定删除「' + filename + '」这条待确认的上传链接吗？删除后该 PUT 地址立即失效。',
+        confirmText: '删除',
+      });
+      if (!ok) return;
+      try {
+        await R2.request(BASE_PATH + '/api/files/' + id, { method: 'DELETE' });
+        R2.toast('已删除', 'success');
+        const row = document.querySelector('#putlink-list [data-link-id="' + id + '"]');
+        if (row) row.remove();
+        updatePendingCount(-1);
+        ensurePendingEmptyState();
+      } catch (err) {
+        R2.toast(err.message, 'error');
+      }
+    }
+
+    /* ---------- 待确认链接列表：局部更新，避免刷新页面打断弹窗 ---------- */
+    function pendingRowHTML(link) {
+      const esc = R2.escapeHTML;
+      return '<div class="list-row" data-link-id="' + link.file_id + '">' +
+        '<div class="file-main">' +
+          '<div class="file-name">' + esc(link.filename) + '</div>' +
+          '<div class="file-meta">' +
+            '<span class="badge badge-warning"><span class="dot"></span>等待上传</span>' +
+            '<span class="sep"></span><span>生成于 ' + R2.formatTime(new Date()) + '</span>' +
+            (link.expires_at ? '<span class="sep"></span><span>链接 ' + R2.formatTime(link.expires_at) + ' 过期</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="row-actions">' +
+          '<button class="btn btn-sm" type="button" onclick="regenPutLink(' + link.file_id + ')">重签</button>' +
+          '<button class="btn btn-sm btn-success" type="button" onclick="confirmPutLink(' + link.file_id + ')">确认</button>' +
+          '<button class="icon-btn danger" type="button" title="删除这条上传链接" onclick="deletePutLink(' + link.file_id + ', \'' + esc(link.filename).replace(/'/g, "\\'") + '\')">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M9 7V4h6v3"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function prependPendingLink(link) {
+      if (!link || !link.file_id) return;
+      const list = document.getElementById('putlink-list');
+      if (!list) return;
+      const empty = list.querySelector('.empty');
+      if (empty) empty.remove();
+      const wrap = document.createElement('div');
+      wrap.innerHTML = pendingRowHTML(link);
+      if (wrap.firstElementChild) list.prepend(wrap.firstElementChild);
+      updatePendingCount(1);
+    }
+
+    function updatePendingCount(delta) {
+      const badge = document.getElementById('pending-count-badge');
+      if (!badge) return;
+      badge.textContent = String(Math.max(0, Number(badge.textContent || '0') + delta));
+    }
+
+    function ensurePendingEmptyState() {
+      const list = document.getElementById('putlink-list');
+      if (!list) return;
+      if (list.querySelector('.list-row')) return;
+      list.innerHTML = '<div class="empty">' +
+        '<div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>' +
+        '<div class="empty-title">没有待确认的上传链接</div>' +
+        '<div class="empty-desc">点击右上角「生成链接」，即可创建一个可直接 PUT 上传的地址</div>' +
+        '</div>';
+    }
+
+    loadShares();
+  </script>
+</body>
+</html>

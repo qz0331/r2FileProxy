@@ -1,0 +1,49 @@
+# Binaries
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Development binaries
+/r2proxy.exe
+/r2proxy
+
+# Go workspace
+go.work
+
+# Environment
+.env
+.env.local
+!.env.example
+
+# Cookies / tokens captured from browsers or curl
+cookies.txt
+*.cookies
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Build output
+/release/*/r2proxy
+/release/*/r2proxy.exe
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp/
+temp/
